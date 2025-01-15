@@ -85,7 +85,10 @@ def recommended(request):
     """
     token = request.headers.get('Authorization')
     if not token:
-        return JsonResponse({'error': 'Authorization token missing'}, status=400)
+        # Default fallback for unauthenticated users
+        default_recommendations = product_export.head(10)
+        return JsonResponse({'similar_products': default_recommendations.to_dict(orient='records')})
+        #return JsonResponse({'error': 'Authorization token missing'}, status=400)
 
     token = token.split(" ")[1] if "Bearer " in token else token
     url = "https://moretrek.com/api/auth/user/all/details/"
@@ -113,14 +116,12 @@ def recommended(request):
 
         # Fallback recommendations based on profile
         gender, age = process_user_profile(user_data)
-        print(gender)
         fallback_recommendations = fetch_product_recommendations(gender, age)
-        print(fallback_recommendations)
         return JsonResponse({'similar_products': fallback_recommendations.to_dict(orient='records')})
 
-    # Default fallback for unauthenticated users
-    default_recommendations = product_export.head(10)
-    return JsonResponse({'similar_products': default_recommendations.to_dict(orient='records')})
+    # # Default fallback for unauthenticated users
+    # default_recommendations = product_export.head(10)
+    # return JsonResponse({'similar_products': default_recommendations.to_dict(orient='records')})
 
 def similar_item(request, product_id):
     """
