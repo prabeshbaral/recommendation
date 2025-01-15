@@ -5,10 +5,15 @@ import joblib
 import os
 import requests
 from datetime import datetime
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
 
 # Load pre-saved models and data
 final = joblib.load('recommend/models/final_df.joblib')
 product_export = joblib.load('recommend/models/products_export.joblib')
+df = joblib.load('recommend/models/dataframe.joblib')
+tfidf_matrix = joblib.load('recommend/models/tfidf_matrix.joblib')
+tfidf_vectorizer = joblib.load('recommend/models/tfidf_vectorizer.joblib')
 
 # Create your views here
 def abc(request):
@@ -77,7 +82,51 @@ def model_creation(request):
     # Save preprocessed data
     joblib.dump(final_df, 'recommend/models/final_df.joblib')
     joblib.dump(products_export, 'recommend/models/products_export.joblib')
+
+
+    #for similarproduct
+    df=product_export.drop(['SKU','Is Active','Slug','Meta Title','Meta Description','Created At','Updated At'],axis=1)
+    #creating model of dataframe
+    joblib.dump(df, 'recommend/models/dataframe.joblib')
+    tfidf_vectorizer = TfidfVectorizer(stop_words='english')
+    tfidf_matrix = tfidf_vectorizer.fit_transform(product_export['Name'])
+
+    #creating model of tfidf matrix and vectorizer
+    joblib.dump(tfidf_matrix, 'recommend/models/tfidf_matrix.joblib')
+    joblib.dump(tfidf_vectorizer, 'recommend/models/tfidf_vectorizer.joblib')
     return HttpResponse('Successfully updated!')
+
+def get_similar_products(product_name,product_category, product_id,tfidf_matrix=tfidf_matrix, tfidf_vectorizer=tfidf_vectorizer,df=df, top_n=5):
+
+    df_filtered = df[df['Category']==product_category]
+
+    # Get the indices of the filtered rows
+    filtered_indices = df_filtered.index
+
+    # Extract the rows from the original TF-IDF matrix corresponding to these indices
+    tfidf_matrix_filtered = tfidf_matrix[filtered_indices]
+
+    # Transform the product name into the TF-IDF vector
+    product_tfidf = tfidf_vectorizer.transform([product_name])
+    
+    # Compute cosine similarity
+    cosine_sim = cosine_similarity(product_tfidf, tfidf_matrix_filtered)
+    sim_scores = list(enumerate(cosine_sim.flatten()))
+    
+    # Sort the similarity scores
+    sim_scores = sorted(sim_scores, key=lambda x: x[1], reverse=True)
+
+    product_indices = [i[0] for i in sim_scores[:top_n+1]]
+    
+    # Get the top similar products from the filtered DataFrame
+    result = df_filtered.iloc[product_indices]
+
+    if ((result['ID']==product_id).any()):
+        result=result[result['ID']!=product_id]
+    else:
+        result=result[:top_n]
+    # Return the result without the 'product_id' column
+    return result
 
 def recommended(request):
     """
@@ -128,7 +177,6 @@ def similar_item(request, product_id):
     Fetch similar items based on category of the given product.
     """
     category = product_export.loc[product_export["ID"] == product_id, 'Category'].values
-    if category:
-        similar_products = product_export[product_export['Category'].isin(category)].head(10)
-        return JsonResponse({'similar_products': similar_products.to_dict(orient='records')})
-    return JsonResponse({'error': 'Product not found'}, status=404)
+    name=product_export.loc[product_export["ID"] == product_id, 'Name'].values
+    similar_products=get_similar_products(name[0],category[0],product_id=product_id)
+    return JsonResponse({'similar_products':similar_products.to_dict(orient='records')})
