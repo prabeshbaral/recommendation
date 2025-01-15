@@ -37,10 +37,7 @@ def validate_token_and_fetch_details(token, url):
         raise ValueError(f"Error fetching details: {e}")
 
 def model_creation(request):
-    current_directory = os.getcwd()
-
-    # Print the current directory
-    print("Current Directory:", current_directory)
+    
     
     order_order=pd.read_csv('recommend/datasets/orders_order.csv')
     order_order_df=order_order[['id','user_id','address_id','status']]
