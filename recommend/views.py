@@ -49,10 +49,22 @@ def check_for_sale(dataframe, product_variantflashsale=product_variantflashsale)
     merged_df['final_price'] = merged_df['final_price'].where(merged_df['is_flash'], merged_df['Base Price'])
     
     # Select only the required columns for the result
-    result_df = merged_df[['ID',"Name", "Description",'Base Price',"Category","Image URL",'final_price', 'is_flash', 'discount_percentage']]
+    result_df = merged_df[['ID',"Name", "Description",'Base Price',"Category","Image URL",'final_price', 'is_flash', 'discount_percentage']].rename(columns={'ID': 'id',"Name":'name',"Description":'description','Base Price':'base_price','Category':'category','Image URL':'image','is_flash':'is_on_flash_sale'})
+    result_df
     
     return result_df
-
+"""
+ "id": "20a67ba2-3df5-4619-bb19-3bc77d357dc1",
+            "name": "Polo T-shirt",
+            "description": "mk.sdagbdjkbjkk",
+            "base_price": "200.00",
+            "category": "Boy's Fashion",
+            "image": null,
+            "final_price": 200.0,
+            "is_on_flash_sale": false,
+            "discount_percentage": 0.0
+        },
+"""
 
 
 def validate_token_and_fetch_details(token, url):
@@ -181,7 +193,8 @@ def recommended(request):
     if not token:
         # Default fallback for unauthenticated users
         default_recommendations = product_export.head(10)
-        return JsonResponse({'similar_products': default_recommendations.to_dict(orient='records')})
+        final_prod2=check_for_sale(default_recommendations)
+        return JsonResponse({'similar_products': final_prod2.to_dict(orient='records')})
         #return JsonResponse({'error': 'Authorization token missing'}, status=400)
 
     token = token.split(" ")[1] if "Bearer " in token else token
@@ -196,19 +209,28 @@ def recommended(request):
         user_df = final[final['user_id'] == user_id]
    
         if not user_df.empty:
+            print(user_df.columns)
             # Personalized recommendations based on order history
             category_counts = user_df['Category'].value_counts()
-            ordered_product_ids = user_df['product_id'].unique()
+            ordered_product_ids = user_df['id'].unique()
+            print(ordered_product_ids,'orderproduct_id')
+            print(product_export["ID"].unique)
 
             recommended_products = []
             for category, count in category_counts.items():
-                category_products = final[(final['Category'] == category) & (~final['ID'].isin(ordered_product_ids))]
-                recommended_products.append(category_products.head(count))
+                print(category)
+                print(count)
+                category_products = product_export[(product_export['Category'] == category) & (~product_export['ID'].isin(ordered_product_ids))]
+                recommended_products.append(category_products)
 
             if recommended_products:
-                print(combined_recommendations.columns)
-                combined_recommendations = pd.concat(recommended_products).head(10)
-                final_prod1=check_for_sale(combined_recommendations)
+                combined_recommendations = pd.concat(recommended_products)
+                combined_recommendations.shape
+                combined_recommendations=combined_recommendations
+                if combined_recommendations.shape[0]>10:
+                    final_prod1=check_for_sale(combined_recommendations).sample(10)
+                else:
+                    final_prod1=check_for_sale(combined_recommendations)
                 return JsonResponse({'similar_products': final_prod1.to_dict(orient='records')})
 
         # Fallback recommendations based on profile
