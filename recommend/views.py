@@ -11,13 +11,49 @@ from sklearn.metrics.pairwise import cosine_similarity
 # Load pre-saved models and data
 final = joblib.load('recommend/models/final_df.joblib')
 product_export = joblib.load('recommend/models/products_export.joblib')
-df = joblib.load('recommend/models/dataframe.joblib')
 tfidf_matrix = joblib.load('recommend/models/tfidf_matrix.joblib')
 tfidf_vectorizer = joblib.load('recommend/models/tfidf_vectorizer.joblib')
+product_variantflashsale=joblib.load('recommend/models/product_variantflashsale.joblib')
 
 # Create your views here
 def abc(request):
     return HttpResponse('Hello, World!')
+
+def check_for_sale(dataframe, product_variantflashsale=product_variantflashsale):
+    """
+    This function checks if a product in the dataframe has a matching product_id in the 
+    product_variantflashsale table. If a match is found, it calculates the final price 
+    based on the discount percentage; otherwise, it sets default values.
+    
+    Parameters:
+    - dataframe (pd.DataFrame): The main dataframe containing product details.
+    - product_variantflashsale (pd.DataFrame): The table containing flash sale details.
+    
+    Returns:
+    - pd.DataFrame: Updated dataframe with is_flash, discount_percentage, and final_price columns.
+    """
+    # Merge the two dataframes on the ID and product_id columns
+    merged_df = dataframe.merge(product_variantflashsale, 
+                                how='left', 
+                                left_on='ID', 
+                                right_on='product_id')
+    
+    # Fill NaN values for is_flash and discount_percentage where no match is found
+    merged_df['is_flash'] = merged_df['is_flash'].fillna(False)
+    merged_df['discount_percentage'] = merged_df['discount_percentage'].fillna(0)
+    
+    # Calculate final_price based on discount_percentage
+    merged_df['final_price'] = merged_df['Base Price'] * (1 - merged_df['discount_percentage'] / 100)
+    
+    # Replace final_price with base_price where no flash sale exists
+    merged_df['final_price'] = merged_df['final_price'].where(merged_df['is_flash'], merged_df['Base Price'])
+    
+    # Select only the required columns for the result
+    result_df = merged_df[['ID',"Name", "Description",'Base Price',"Category","Image URL",'final_price', 'is_flash', 'discount_percentage']]
+    
+    return result_df
+
+
 
 def validate_token_and_fetch_details(token, url):
     """
@@ -72,34 +108,38 @@ def model_creation(request):
     orders = pd.read_csv('recommend/datasets/orders_order.csv')[['id', 'user_id', 'address_id', 'status']].rename(columns={'id': 'order_id'})
     order_items = pd.read_csv('recommend/datasets/orders_orderitem.csv')[['price', 'order_id', 'product_variant_id', 'created']]
     product_variants = pd.read_csv('recommend/datasets/product_productvariantcombination.csv')[['product_id', 'id']].rename(columns={'id': 'product_variant_id'})
-    products_export = pd.read_csv('recommend/datasets/products_export .csv')
+    products_export = pd.read_csv('recommend/datasets/products_export.csv')
+    flashsale=pd.read_csv('recommend/datasets/product_variantflashsale.csv')
+    product_variantflashsale=pd.merge(product_variants,flashsale,left_on='product_variant_id',right_on='variant_id')
+
+
+
 
     # Merge datasets
     merged_orders = pd.merge(orders, order_items, on='order_id')
     merged_with_variants = pd.merge(merged_orders, product_variants, on='product_variant_id')
     final_df = pd.merge(merged_with_variants, products_export, left_on='product_id', right_on='ID').sort_values(by='created', ascending=False)
+    final_df.rename(columns={'product_id':'id'},inplace=True)
 
     # Save preprocessed data
     joblib.dump(final_df, 'recommend/models/final_df.joblib')
-    joblib.dump(products_export, 'recommend/models/products_export.joblib')
+    joblib.dump(products_export,'recommend/models/products_export.joblib')
+    joblib.dump(product_variantflashsale,"recommend/models/product_variantflashsale.joblib")
 
 
-    #for similarproduct
-    df=product_export.drop(['SKU','Is Active','Slug','Meta Title','Meta Description','Created At','Updated At'],axis=1)
     #creating model of dataframe
-    joblib.dump(df, 'recommend/models/dataframe.joblib')
+    
     tfidf_vectorizer = TfidfVectorizer(stop_words='english')
-    tfidf_matrix = tfidf_vectorizer.fit_transform(product_export['Name'])
+    tfidf_matrix = tfidf_vectorizer.fit_transform(products_export['Name'])
+    print(tfidf_matrix.shape)
 
     #creating model of tfidf matrix and vectorizer
     joblib.dump(tfidf_matrix, 'recommend/models/tfidf_matrix.joblib')
     joblib.dump(tfidf_vectorizer, 'recommend/models/tfidf_vectorizer.joblib')
     return HttpResponse('Successfully updated!')
 
-def get_similar_products(product_name,product_category, product_id,tfidf_matrix=tfidf_matrix, tfidf_vectorizer=tfidf_vectorizer,df=df, top_n=5):
-
+def get_similar_products(product_name,product_category, product_id,tfidf_matrix=tfidf_matrix, tfidf_vectorizer=tfidf_vectorizer,df=product_export, top_n=5):
     df_filtered = df[df['Category']==product_category]
-
     # Get the indices of the filtered rows
     filtered_indices = df_filtered.index
 
@@ -120,8 +160,11 @@ def get_similar_products(product_name,product_category, product_id,tfidf_matrix=
     
     # Get the top similar products from the filtered DataFrame
     result = df_filtered.iloc[product_indices]
+    print(result)
+
 
     if ((result['ID']==product_id).any()):
+
         result=result[result['ID']!=product_id]
     else:
         result=result[:top_n]
@@ -129,6 +172,8 @@ def get_similar_products(product_name,product_category, product_id,tfidf_matrix=
     return result
 
 def recommended(request):
+
+
     """
     Generate personalized recommendations for a user based on past purchases or profile.
     """
@@ -149,6 +194,7 @@ def recommended(request):
     user_id = user_data.get("id")
     if user_id:
         user_df = final[final['user_id'] == user_id]
+   
         if not user_df.empty:
             # Personalized recommendations based on order history
             category_counts = user_df['Category'].value_counts()
@@ -160,13 +206,16 @@ def recommended(request):
                 recommended_products.append(category_products.head(count))
 
             if recommended_products:
+                print(combined_recommendations.columns)
                 combined_recommendations = pd.concat(recommended_products).head(10)
-                return JsonResponse({'similar_products': combined_recommendations.to_dict(orient='records')})
+                final_prod1=check_for_sale(combined_recommendations)
+                return JsonResponse({'similar_products': final_prod1.to_dict(orient='records')})
 
         # Fallback recommendations based on profile
         gender, age = process_user_profile(user_data)
         fallback_recommendations = fetch_product_recommendations(gender, age)
-        return JsonResponse({'similar_products': fallback_recommendations.to_dict(orient='records')})
+        final_prod2=check_for_sale(fallback_recommendations)
+        return JsonResponse({'similar_products': final_prod2.to_dict(orient='records')})
 
     # # Default fallback for unauthenticated users
     # default_recommendations = product_export.head(10)
@@ -179,4 +228,6 @@ def similar_item(request, product_id):
     category = product_export.loc[product_export["ID"] == product_id, 'Category'].values
     name=product_export.loc[product_export["ID"] == product_id, 'Name'].values
     similar_products=get_similar_products(name[0],category[0],product_id=product_id)
-    return JsonResponse({'similar_products':similar_products.to_dict(orient='records')})
+    final_prod=check_for_sale(similar_products)
+
+    return JsonResponse({'similar_products':final_prod.to_dict(orient='records')})
